@@ -3,6 +3,7 @@ package com.mx.listviewlib;
 import android.content.Context;
 import android.support.v4.view.GestureDetectorCompat;
 import android.support.v4.widget.ScrollerCompat;
+import android.support.v7.widget.ActionMenuView;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.GestureDetector;
@@ -107,8 +108,22 @@ public class SwipeMenuLayout extends FrameLayout {
             mContentView.setId(CONTENT_VIEW_ID);
         }
 
-
+        mMenuView.setId(MENU_VIEW_ID);
+        mMenuView.setLayoutParams(new ActionMenuView.LayoutParams(LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        addView(mContentView);
+        addView(mMenuView);
     }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+    }
+
 
 
     private int dp2px(int dp) {
