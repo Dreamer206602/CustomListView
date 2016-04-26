@@ -17,6 +17,8 @@ import android.widget.RelativeLayout;
 import android.widget.Scroller;
 import android.widget.TextView;
 
+import java.util.Date;
+
 /**
  * Created by boobooL on 2016/4/25 0025
  * Created 邮箱 ：boobooMX@163.com
@@ -116,8 +118,8 @@ public class RefreshSwipeMenuListView extends ListView implements AbsListView.On
         //初始化头部视图
         mHeaderView = new RefreshListHeader(context);
         mHeaderViewContent = (RelativeLayout) mHeaderView.findViewById(R.id.xlistview_header_content);
-        mHeaderTimeView = (TextView) mHeaderTimeView.findViewById(R.id.xlistview_header_time);
-        addHeaderView(mHeaderTimeView);
+        mHeaderTimeView = (TextView) mHeaderView.findViewById(R.id.xlistview_header_time);
+        addHeaderView(mHeaderView);
 
 
         //初始化尾部视图
@@ -223,23 +225,409 @@ public class RefreshSwipeMenuListView extends ListView implements AbsListView.On
 
                 }
                 if (view instanceof SwipeMenuLayout) {
-                        mTouchView= (SwipeMenuLayout) view;
+                    mTouchView = (SwipeMenuLayout) view;
                 }
                 break;
+            case MotionEvent.ACTION_MOVE:
+                //手势滑动的事件
+                final float deltaY = ev.getRawY() - mLastY;
+                float dy = Math.abs(ev.getY() - mDownY);
+                float dx = Math.abs(ev.getX() - mDownX);
+                mLastY = ev.getRawY();
+                //判断左滑菜单是否未激活，或者x轴偏移平方小于y轴偏移平方3倍的时候
+                if ((mTouchView == null || !mTouchView.isActive()) && Math.pow(dx, 2) / Math.pow(dy, 2) <= 3) {
+                    //判断第一个可见位置并且头布局可见高度大于0时或者y轴偏移量>0
+                    if (getFirstVisiblePosition() == 0 && (mHeaderView.getVisibleHeight() > 0) || deltaY > 0) {
+                        //重新更新头部高度
+                        updateHeaderHeight(deltaY / OFFSET_RADIO);
+                        invokeOnScrolling();
+                    }
+                }
+                if (mTouchState == TOUCH_STATE_X) {
+                    //如果x轴偏移量则弹出左滑的菜单
+                    if (mTouchView != null) {
+                        mTouchView.onSwipe(ev);
+                    }
 
+                    getSelector().setState(new int[]{0});
+                    ev.setAction(MotionEvent.ACTION_CANCEL);
+                    super.onTouchEvent(ev);
+                    return true;
+                } else if (mTouchState == TOUCH_STATE_NONE) {
+                    if (Math.abs(dy) > MAX_Y) {
+                        //如果y轴的偏移量>指定y轴的偏移量，设置y轴的偏移状态
+                        mTouchState = TOUCH_STATE_Y;
+                    } else if (dx > MAX_X) {
+                        //如果x轴偏移量>指定x轴偏移量，设置x轴偏移状态，开始弹出左滑的菜单
+                        mTouchState = TOUCH_STATE_X;
+                        if (mOnSwipeListener != null) {
+                            mOnSwipeListener.onSwipeStart(mTouchPosition);
+                        }
+                    }
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+                mLastY = -1;//reset
+                if (getFirstVisiblePosition() == 0) {
+                    //设置下拉刷新状态值，开启下拉刷新状态
+                    if (mEnablePullRefresh && mHeaderView.getVisibleHeight() > mHeaderViewHeight) {
+                        mPullRefreshing = true;
+                        mHeaderView.setState(RefreshListHeader.STATE_REFRESHING);
+                        if (mOnRefreshListener != null) {
+                            tag = REFRESH;
+                            mOnRefreshListener.onRefresh();
+                        }
+                    }
+                    resetHeaderHeight();
+                }
 
+                lastTouchY = ev.getRawY();//获取上次y轴偏移量
+                if (canLoadMore()) {
+                    //判断是否满足上拉
+                    loadMore();
+                }
+
+                if (mTouchState == TOUCH_STATE_Y) {
+                    //如果为x轴偏移状态，开启左滑
+                    if (mTouchView != null) {
+                        mTouchView.onSwipe(ev);
+                        if (!mTouchView.isOpen()) {
+                            mTouchPosition = -1;
+                            mTouchView = null;
+                        }
+                    }
+
+                    if (mOnSwipeListener != null) {
+                        mOnSwipeListener.onSwipeEnd(mTouchPosition);
+                    }
+                    ev.setAction(MotionEvent.ACTION_CANCEL);
+                    super.onTouchEvent(ev);
+                    return true;
+                }
+                break;
         }
 
         return super.onTouchEvent(ev);
     }
 
-    @Override
-    public void onScrollStateChanged(AbsListView view, int scrollState) {
+    public void smoothOpenMenu(int position) {
+        if (position >= getFirstVisiblePosition() && position <= getLastVisiblePosition()) {
+            View view = getChildAt(position - getFirstVisiblePosition());
+            if (view instanceof SwipeMenuLayout) {
+                mTouchPosition = position;
+                if (mTouchView != null && mTouchView.isOpen()) {
+                    mTouchView.smoothCloseMenu();
+                }
+                mTouchView = (SwipeMenuLayout) view;
+                mTouchView.smoothOpenMenu();
+            }
+
+        }
+    }
+
+    public void setMenuCreator(SwipeMenuCreator menuCreator) {
+        mMenuCreator = menuCreator;
+    }
+
+    public void setOnMenuItemClickListener(OnMenuItemClickListener onMenuItemClickListener) {
+        mOnMenuItemClickListener = onMenuItemClickListener;
+    }
+
+    /**
+     * 设置刷新可用
+     *
+     * @param enable
+     */
+    private void setPullRefreshEnable(boolean enable) {
+        mEnablePullRefresh = enable;
+        if (!mEnablePullRefresh) {
+            //disable,hide the content
+            mHeaderViewContent.setVisibility(INVISIBLE);
+        } else {
+            mHeaderViewContent.setVisibility(VISIBLE);
+        }
+    }
+
+    /**
+     * stop  refresh, reset header view
+     * 停止刷新，重置头部控件
+     *
+     * @param enable
+     */
+    private void setPullLoadEnable(boolean enable) {
+        mEnablePullLoad = enable;
+        if (!mEnablePullLoad) {
+            mFootetView.setVisibility(GONE);
+            mFootetView.setOnClickListener(null);
+        } else {
+            mPullLoading = false;
+            mFootetView.setVisibility(VISIBLE);
+            mFootetView.setOnClickListener(new OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    startLoadMore();
+                }
+            });
+        }
+    }
+
+    /**
+     * stop refresh,reset header view
+     */
+    private void stopRefresh(){
+        if(mPullRefreshing==true){
+            mPullRefreshing=false;
+            resetHeaderHeight();
+        }
+    }
+
+
+
+
+    /**
+     * stop load more，reset footer view
+     * 停止加载更多，重置尾部控件
+     */
+    private void stopLoadMore() {
+        if (mPullLoading == true) {
+            mPullLoading = false;
+            mFootetView.setVisibility(GONE);
+        }
+    }
+
+
+    /**
+     * set last refresh time
+     *
+     * @param time
+     */
+    private void setRefreshTime(String time) {
+        mHeaderTimeView.setText(time);
+    }
+
+    private void invokeOnScrolling() {
+        if (mScrollListener instanceof OnXScrollListener) {
+            OnXScrollListener l = (OnXScrollListener) mScrollListener;
+            l.onXScrolling(this);
+        }
+    }
+
+    /**
+     * 更新头部的高度，设置状态值
+     *
+     * @param delta
+     */
+    private void updateHeaderHeight(float delta) {
+        mHeaderView.setVisibleHeight((int) (delta = mHeaderView.getVisibleHeight()));
+        if (mEnablePullRefresh && !mPullLoading) {
+            if (mHeaderView.getVisibleHeight() > mHeaderViewHeight) {
+                mHeaderView.setState(RefreshListHeader.STATE_READY);
+            } else {
+                mHeaderView.setState(RefreshListHeader.STATE_NORMAL);
+            }
+        }
+
+        setSelection(0);// scroll to top each time
 
     }
 
+
+    /**
+     * 重置头部视图的高度
+     */
+    private void resetHeaderHeight() {
+        int height = mHeaderView.getVisibleHeight();
+        if (height == 0)//不可见
+            return;
+
+        //如果正在刷新并且头部高度没有完全显示不做操作
+        if (mPullRefreshing && height < mHeaderViewHeight) {
+            return;
+        }
+        int finalHeight = 0;//默认
+        //如果正在刷新并且滑动高度大于头部高度
+        if (mPullRefreshing && height > mHeaderViewHeight) {
+            finalHeight = mHeaderViewHeight;
+        }
+        mScrollBack = SCROLLBACK_HEADER;
+        mScroller.startScroll(0, height, 0, finalHeight - height, SCROLL_DURATION);
+        //触发 computeScroll()
+        invalidate();
+
+    }
+
+    /**
+     * 开始上拉
+     */
+    private void startLoadMore() {
+        mPullLoading = true;
+        mFootetView.setVisibility(VISIBLE);
+        if (mOnRefreshListener != null) {
+            tag = LOAD;
+            mOnRefreshListener.onLoadMore();
+        }
+    }
+
+    @Override
+    public void computeScroll() {
+        if (mScroller.computeScrollOffset()) {
+            if (mScrollBack == SCROLLBACK_HEADER) {
+                mHeaderView.setVisibleHeight(mScroller.getCurrY());
+            }
+            postInvalidate();
+            invokeOnScrolling();
+        }
+        super.computeScroll();
+    }
+
+    @Override
+    public void setOnScrollListener(OnScrollListener l) {
+        this.mScrollListener=l;
+    }
+
+    @Override
+    public void onScrollStateChanged(AbsListView view, int scrollState) {
+        if (mScrollListener != null) {
+            mScrollListener.onScrollStateChanged(view, scrollState);
+        }
+
+    }
+
+    /**
+     * 滑动监听
+     *
+     * @param view
+     * @param firstVisibleItem
+     * @param visibleItemCount
+     * @param totalItemCount
+     */
     @Override
     public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount, int totalItemCount) {
 
+        mTotalItemCount = totalItemCount;
+        if (mScrollListener != null) {
+            mScrollListener.onScroll(view, firstVisibleItem, visibleItemCount, totalItemCount);
+        }
+        if (firstVisibleItem + visibleItemCount >= totalItemCount) {
+            isFooterVisible = true;
+        } else {
+            isFooterVisible = false;
+        }
+
     }
+    public void setOnSwipeListener(OnSwipeListener onSwipeListener){
+        this.mOnSwipeListener=onSwipeListener;
+    }
+
+    public void setOnRefreshListener(OnRefreshListener l) {
+        this.mOnRefreshListener = l;
+    }
+
+    public interface OnXScrollListener extends OnScrollListener {
+        void onXScrolling(View view);
+    }
+
+
+    public interface OnMenuItemClickListener {
+        void onMenuItemClick(int position, SwipeMenu menu, int index);
+    }
+
+    public interface OnSwipeListener {
+        void onSwipeStart(int position);
+
+        void onSwipeEnd(int position);
+    }
+
+
+    /**
+     * implements this interface to get refresh/load more event
+     */
+    public interface OnRefreshListener {
+         void onRefresh();
+
+         void onLoadMore();
+    }
+
+    /**
+     * 上拉加载和下拉刷新请求完毕
+     */
+    public void complete() {
+        stopLoadMore();
+        stopRefresh();
+        if (REFRESH.equals(tag)) {
+            RefreshTime.setRefreshTime(getContext(), new Date());
+        }
+    }
+
+    /**
+     * 设置ListView的模式，上拉和下拉
+     *
+     * @param mode
+     */
+    public void setListViewMode(int mode) {
+        if (mode == BOTH) {
+            setPullRefreshEnable(true);
+            setPullLoadEnable(true);
+        } else if (mode == FOOTER) {
+            setPullLoadEnable(true);
+        } else if (mode == HEADER) {
+            setPullRefreshEnable(true);
+        }
+    }
+
+    /**
+     * 判断是否可以上拉加载
+     *
+     * @return
+     */
+    private boolean canLoadMore() {
+        return isBottom() && !mPullLoading && !isPullingUp();
+    }
+
+    /**
+     * 判断是否到达底部
+     *
+     * @return
+     */
+    private boolean isBottom() {
+        if (getCount() > 0) {
+            if (getLastVisiblePosition() == getAdapter().getCount() - 1
+                    && getChildAt(getChildCount() - 1).getBottom() <= getHeight()) {
+                 return true;
+            }
+        }
+        return false;
+    }
+
+
+    private boolean isPullingUp(){
+        return (firstTouchY-lastTouchY)>=200;
+    }
+
+    private void loadMore(){
+        if(mOnRefreshListener!=null){
+            setLoading(true);
+        }
+    }
+
+    /**
+     * 设置是否上拉
+     * @param loading
+     */
+    private void setLoading(boolean loading){
+        if(this==null)return;
+        mPullLoading=loading;
+        if(loading){
+            mFootetView.setVisibility(VISIBLE);
+
+            setSelection(getAdapter().getCount()-1);
+            mOnRefreshListener.onLoadMore();
+        }else {
+            mFootetView.setVisibility(GONE);
+            firstTouchY=0;
+            lastTouchY=0;
+        }
+    }
+
+
 }

@@ -1,8 +1,6 @@
 package com.mx.listviewlib;
 
-import android.content.Context;
 import android.text.TextUtils;
-import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
@@ -93,8 +91,11 @@ public class SwipeMenuView extends LinearLayout implements View.OnClickListener 
         this.mLayout=mLayout;
     }
 
+    public void setOnSwipeItemClickListener(OnSwipeItemClickListener itemClickListener) {
+        mItemClickListener = itemClickListener;
+    }
 
-    public static interface OnSwipeItemClickListener{
+    public  interface OnSwipeItemClickListener{
         void onItemClick(SwipeMenuView view,SwipeMenu menu,int index);
     }
 }
